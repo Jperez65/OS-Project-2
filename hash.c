@@ -9,7 +9,7 @@
 #include "hash_functions.h"
 
 #define KEEP 16            // Use only the first 16 bytes of each hash
-#define THREAD_COUNT 10    // Number of worker threads
+#define THREAD_COUNT 8    // Number of worker threads
 
 // Structure for a hashed password from the file
 struct cracked {
@@ -29,7 +29,7 @@ char *alg_names[4] = { "MD5", "SHA1", "SHA256", "SHA512" };
 
 // Array for hashed passwords of type cracked
 struct cracked *cracked_arr = NULL;
-// Number of elements in cracke_arr
+// Number of elements in cracked_arr
 int num_hashed = 0;
 // Array of common passwords
 char **common_pass = NULL;
@@ -123,36 +123,39 @@ void *worker() {
 void crack_hashed_passwords(char *pass_list, char *hashed_list, char *output) {
     FILE *fp;
     char hex_hash[2*KEEP+1];
-	int count;
+    int count, capacity;
     
     // Load the hashed passwords
     fp = fopen(hashed_list, "r");
     assert(fp != NULL);
+	capacity = 10;
     count = 0;
-    while (fscanf(fp, "%s", hex_hash) == 1)
-        count++;
-    rewind(fp);
-    
-	// Allocate space for cracked_arr
-    cracked_arr = malloc(count * sizeof(struct cracked));
-    assert(cracked_arr != NULL);
-	// Itereate through the file of hashed passwords
-    for (int i = 0; i < count; i++) {
-        fscanf(fp, "%s", hex_hash);
-        // Convert hex string to binary array
-        for (int j = 0; j < KEEP; j++) {
-            cracked_arr[i].bin[j] = hex2byte(hex_hash[2*j], hex_hash[2*j+1]);
+    // Create a dynamic array to grow as needed instead of iterating through the file twice
+    struct cracked *temp_arr = malloc(capacity * sizeof(struct cracked));
+    assert(temp_arr != NULL);
+    while (fscanf(fp, "%s", hex_hash) == 1) {
+        // Grow array if necessary.
+        if (count >= capacity) {
+            capacity *= 2;
+            temp_arr = realloc(temp_arr, capacity * sizeof(struct cracked));
+            assert(temp_arr != NULL);
         }
-		// Initialize its struct values
-        cracked_arr[i].pass = NULL;
-        cracked_arr[i].alg = NULL;
-        cracked_arr[i].index = INT_MAX;
+        // Convert hex string to binary array for the current hashed password.
+        for (int j = 0; j < KEEP; j++) {
+            temp_arr[count].bin[j] = hex2byte(hex_hash[2*j], hex_hash[2*j+1]);
+        }
+        // Initialize its struct values.
+        temp_arr[count].pass = NULL;
+        temp_arr[count].alg = NULL;
+        temp_arr[count].index = INT_MAX;
+        count++;
     }
     fclose(fp);
-	// Store the number of hashed passwords
+    cracked_arr = temp_arr;
+    // Store the number of hashed passwords.
     num_hashed = count;
     
-    // Allocate and initialize one mutex per hashed entry
+    // Allocate and initialize one mutex per hashed entry.
     cracked_mutexes = malloc(num_hashed * sizeof(pthread_mutex_t));
     assert(cracked_mutexes != NULL);
     for (int i = 0; i < num_hashed; i++) {
@@ -162,30 +165,34 @@ void crack_hashed_passwords(char *pass_list, char *hashed_list, char *output) {
     // Load the common passwords
     fp = fopen(pass_list, "r");
     assert(fp != NULL);
+    capacity = 10;
     count = 0;
+	// Create a dynamic array to grow as needed instead of iterating through the file twice
+    char **temp_common = malloc(capacity * sizeof(char *));
+    assert(temp_common != NULL);
     char temp_pass[256];
-    while (fscanf(fp, "%s", temp_pass) == 1)
-		count++;
-    rewind(fp);
-    
-	// Allocate space for the list of common passwords
-    common_pass = malloc(count * sizeof(char *));
-    assert(common_pass != NULL);
-	// Store the common passwords
-    for (int i = 0; i < count; i++) {
-        fscanf(fp, "%s", temp_pass);
-        common_pass[i] = strdup(temp_pass);
+    while (fscanf(fp, "%s", temp_pass) == 1) {
+        // Grow the array if needed.
+        if (count >= capacity) {
+            capacity *= 2;
+            temp_common = realloc(temp_common, capacity * sizeof(char *));
+            assert(temp_common != NULL);
+        }
+        // Store the common password.
+        temp_common[count] = strdup(temp_pass);
+        count++;
     }
     fclose(fp);
-	// Store the number of common passwords
+    common_pass = temp_common;
+    // Store the number of common passwords.
     num_common = count;
     
-    //  Create worker threads
+    // Create worker threads
     int num_threads = THREAD_COUNT;
     pthread_t threads[num_threads];
     work_index = 0;
     
-	// Create all of our threads and then join all of our threads
+    // Create all of our threads and then join all of our threads.
     for (int i = 0; i < num_threads; i++) {
         pthread_create(&threads[i], NULL, worker, NULL);
     }
@@ -193,20 +200,20 @@ void crack_hashed_passwords(char *pass_list, char *hashed_list, char *output) {
         pthread_join(threads[i], NULL);
     }
     
-    // Write the output in the same order as hashed_list
+    // Write the output in the same order as hashed_list.
     fp = fopen(output, "w");
     assert(fp != NULL);
     for (int i = 0; i < num_hashed; i++) {
-        if (cracked_arr[i].pass == NULL){
+        if (cracked_arr[i].pass == NULL) {
             fprintf(fp, "not found\n");
-		}
-        else{
+        }
+        else {
             fprintf(fp, "%s:%s\n", cracked_arr[i].pass, cracked_arr[i].alg);
-		}
+        }
     }
     fclose(fp);
     
-    // Free the all of the allocated memory
+    // Free all of the allocated memory.
     for (int i = 0; i < num_hashed; i++) {
         pthread_mutex_destroy(&cracked_mutexes[i]);
         free(cracked_arr[i].pass);
